@@ -47,7 +47,7 @@
 #define NNN(instruction)        (instruction & 0x0FFF)
 
 // cycle constants
-#define DEFAULT_CYCLES_PER_SEC  60
+#define DEFAULT_FPS             60
 
 #define KEYCODE_ESC             27
 
@@ -359,13 +359,23 @@ void chip8_decode_execute(Chip8 *c, uint16_t instruction) {
                       const uint8_t h = N(instruction);
                       DEBUG("draw %u, %u, %u", x, y, h);
                       chip8_load_pixels(c, x, y, h);
-                      chip8_display(c);
                       break;
                   }
         case 0xF: {
                       const uint8_t reg = X(instruction);
                       switch (NN(instruction)) {
-                      // TODO: delay_timer and sound_timer instructions
+                      case 0x07:
+                          c->v[reg] = c->delay_timer;
+                          DEBUG("v%u = delay_timer (%u)", reg, c->delay_timer);
+                          break;
+                      case 0x15:
+                          c->delay_timer = c->v[reg];
+                          DEBUG("delay_timer = v%u (%u)", reg, c->v[reg]);
+                          break;
+                      case 0x18:
+                          c->delay_timer = c->v[reg];
+                          DEBUG("sound_timer = v%u (%u)", reg, c->v[reg]);
+                          break;
                       case 0x1E:
                           c->v[0xF] =
                               (c->i += c->v[reg]) > MEM_SIZE;
@@ -419,23 +429,30 @@ int main(int argc, const char **argv) {
     chip8_load_to_mem(c, FONT_DATA_OFFSET, FONT_DATA, sizeof(FONT_DATA));
     chip8_load_rom(c, argv[1]);
 
-    // TODO: introduce flag for changing cycles_per_sec
-    const uint32_t cycles_per_sec = DEFAULT_CYCLES_PER_SEC;
+    // TODO: introduce flag for changing instructions_per_sec
+    const uint32_t instructions_per_sec = 700;
 
     if (!platform_setup())
         FATAL("Failed to setup platform");
 
     while (1) {
 
-        uint16_t instruction = chip8_fetch(c);
-        chip8_decode_execute(c, instruction);
-        
+        for (uint32_t i = 0; i < instructions_per_sec/DEFAULT_FPS; ++i) {
+            uint16_t instruction = chip8_fetch(c);
+            chip8_decode_execute(c, instruction);
+        }
+
         switch (platform_get_keycode()) {
             case KEYCODE_ESC:
                 goto quit;
         }
 
-        platform_sleep(1000/cycles_per_sec);
+        c->delay_timer -= c->delay_timer != 0;
+        c->sound_timer -= c->sound_timer != 0 ? platform_beep() : 0;
+        chip8_display(c);
+
+        platform_sleep(1000/DEFAULT_FPS);
+
     }
 
 quit:

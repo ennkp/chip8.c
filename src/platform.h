@@ -6,6 +6,11 @@
 #include <string.h>
 #include <stdint.h>
 
+#define ESC                         "\x1b"
+#define EXECUTE_ANSI_CODE(...)      printf(ESC __VA_ARGS__)
+#define SET_WHITE                   ESC"[107m"
+#define SET_DEFAULT                 ESC"[49m"
+
 #ifdef __unix__
 
 #include <termios.h>
@@ -13,11 +18,6 @@
 #include <fcntl.h>
 #include <assert.h>
 #include <time.h>
-
-#define ESC                         "\x1b"
-#define EXECUTE_ANSI_CODE(...)      printf(ESC __VA_ARGS__)
-#define SET_WHITE                   ESC"[107m" 
-#define SET_DEFAULT                 ESC"[49m"
 
 typedef struct termios termios;
 
@@ -140,6 +140,13 @@ char platform_get_keycode(void) {
         return buf[0];
     }
     return 0;
+}
+
+static inline
+int platform_beep(void) {
+    // TODO: more reliable beep on linux
+    printf("\a");
+    return 1;
 }
 
 #else
