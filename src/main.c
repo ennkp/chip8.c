@@ -40,6 +40,7 @@
 #define PIXEL_TEXT              "  "
 
 // instruction decoding constants
+#define OP(instruction)         (instruction >> 12)
 #define X(instruction)          ((instruction & 0x0F00) >> 8)
 #define Y(instruction)          ((instruction & 0x00F0) >> 4)
 #define N(instruction)          (instruction & 0x000F)
@@ -129,7 +130,7 @@ uint16_t chip8_fetch(Chip8 *c) {
 
     uint16_t instruction = c->mem[c->pc] << BYTE_SIZE | c->mem[c->pc+1];
     c->pc += 2;
-    DEBUG("instruction: %x", instruction);
+    DEBUG("instruction: %04x", instruction);
     return instruction;
 }
 
@@ -195,14 +196,14 @@ void chip8_display(Chip8 *c) {
 
 static inline
 void chip8_decode_execute(Chip8 *c, uint16_t instruction) {
-    switch (instruction >> 12) {
+    switch (OP(instruction)) {
         case 0x0: {
-                      switch (instruction) {
-                      case 0x0E00:
+                      switch (NN(instruction)) {
+                      case 0xE0:
                           DEBUG("Clear screen");
                           chip8_clear_screen(c);
                           break;
-                      case 0x00EE:
+                      case 0xEE:
                           {
                               const uint16_t jmp_pos = c->stack[--c->sp];
                               DEBUG("Return to %u", jmp_pos);
@@ -414,7 +415,7 @@ void chip8_decode_execute(Chip8 *c, uint16_t instruction) {
                       break;
                   }
         default:  {
-                      DEBUG("Unrecognized instruction: %u", instruction);
+                      DEBUG("Unrecognized instruction: %04x", instruction);
                   }
     }
 }
