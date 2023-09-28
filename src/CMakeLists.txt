@@ -22,5 +22,6 @@ else ()
         -fsanitize=address
         )
     target_link_options(${EXE_NAME} PRIVATE -fsanitize=address)
+    target_link_libraries(${EXE_NAME} PRIVATE -lX11)
 
 endif()

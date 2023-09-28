@@ -50,8 +50,6 @@
 // cycle constants
 #define DEFAULT_FPS             60
 
-#define KEYCODE_ESC             27
-
 static uint8_t FONT_DATA[] = {
     0xF0, 0x90, 0x90, 0x90, 0xF0, // 0
     0x20, 0x60, 0x20, 0x20, 0x70, // 1
@@ -81,6 +79,7 @@ typedef struct {
     uint8_t    sound_timer;
     uint8_t    v[REG_COUNT];
     uint8_t    display[DISPLAY_SIZE];
+    KeyStates   keys;
 } Chip8;
 
 static inline
@@ -125,6 +124,7 @@ static inline
 uint16_t chip8_fetch(Chip8 *c) {
     if (c->pc + 2 > MEM_SIZE) {
         DEBUG("Reached end of memory: %u", c->pc);
+        platform_revert();
         exit(1);
     }
 
@@ -362,9 +362,45 @@ void chip8_decode_execute(Chip8 *c, uint16_t instruction) {
                       chip8_load_pixels(c, x, y, h);
                       break;
                   }
+        case 0xE: {
+                      const uint8_t reg = X(instruction);
+                      switch (NN(instruction)) {
+                      case 0x9E:
+                          c->pc += KEY_DOWN(c->keys, c->v[reg]) * 2;
+                          DEBUG("Skip if %x pressed", c->v[reg]);
+                          break;
+                      case 0xA1:
+                          c->pc += !KEY_DOWN(c->keys, c->v[reg]) * 2;
+                          DEBUG("Skip if %x not pressed", c->v[reg]);
+                          break;
+                      }
+                      break;
+                  }
         case 0xF: {
                       const uint8_t reg = X(instruction);
                       switch (NN(instruction)) {
+                      case 0x0A:
+                          {
+                              DEBUG("Wait for key press and release");
+                              static KeyStates store = 0;
+
+                              if (store > c->keys) {
+                                  uint16_t k = 0;
+
+                                  const KeyStates diff = store ^ c->keys;
+                                  while (k < CKEY_ESC && !KEY_DOWN(diff, k))
+                                      k++;
+
+                                  printf("Key pressed and released: %s\n", get_chip8key_name(k));
+                                  c->v[reg] = k;
+                                  store = 0;
+                              } else {
+                                  store = c->keys;
+                                  c->pc -= 2;
+                              }
+
+                              break;
+                          }
                       case 0x07:
                           c->v[reg] = c->delay_timer;
                           DEBUG("v%u = delay_timer (%u)", reg, c->delay_timer);
@@ -443,14 +479,14 @@ int main(int argc, const char **argv) {
             chip8_decode_execute(c, instruction);
         }
 
-        switch (platform_get_keycode()) {
-            case KEYCODE_ESC:
-                goto quit;
-        }
-
         c->delay_timer -= c->delay_timer != 0;
         c->sound_timer -= c->sound_timer != 0 ? platform_beep() : 0;
         chip8_display(c);
+
+        if (platform_set_keystates(&c->keys)) {
+            if (KEY_DOWN(c->keys, CKEY_ESC))
+                goto quit;
+        }
 
         platform_sleep(1000/DEFAULT_FPS);
 
