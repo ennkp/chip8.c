@@ -145,6 +145,8 @@ int disable_terminal_raw_mode(void) {
     return 1;
 }
 
+#define PLATFORM_EOL "\n"
+
 #elif defined _WIN32
 
 #define WIN32_LEAN_AND_MEAN
@@ -227,6 +229,8 @@ int disable_stdout_ansi_code_processing(void) {
     return 1;
 }
 
+#define PLATFORM_EOL "\r\n"
+
 #endif // end of OS specific stuff
 
 static inline
@@ -307,6 +311,8 @@ int platform_set_keystates(KeyStates *keystates) {
     }
 
 #elif defined _WIN32
+(void) keystates;
+(void) keys;
 #endif
 
     return state_changed;
@@ -316,6 +322,17 @@ static inline
 int platform_beep(void) {
     printf("\a");
     return 1;
+}
+
+static inline
+void platform_write_to_console(const char *buffer, size_t buffer_size, uint32_t no_of_lines) {
+#ifdef __unix__
+    (void) buffer_size;
+    printf("%s", buffer);
+#elif defined _WIN32
+    WriteConsole(hStdout, buffer, buffer_size, NULL, NULL);
+#endif
+    platform_cursor_up(no_of_lines);
 }
 
 static inline

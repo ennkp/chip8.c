@@ -83,21 +83,6 @@ typedef struct {
 } Chip8;
 
 static inline
-void print_as_formatted_binary(uint8_t byte) {
-
-    printf("%s%s%s%s%s%s%s%s",
-            byte & (1 << 7) ? SET_WHITE PIXEL_TEXT : SET_DEFAULT PIXEL_TEXT,
-            byte & (1 << 6) ? SET_WHITE PIXEL_TEXT : SET_DEFAULT PIXEL_TEXT,
-            byte & (1 << 5) ? SET_WHITE PIXEL_TEXT : SET_DEFAULT PIXEL_TEXT,
-            byte & (1 << 4) ? SET_WHITE PIXEL_TEXT : SET_DEFAULT PIXEL_TEXT,
-            byte & (1 << 3) ? SET_WHITE PIXEL_TEXT : SET_DEFAULT PIXEL_TEXT,
-            byte & (1 << 2) ? SET_WHITE PIXEL_TEXT : SET_DEFAULT PIXEL_TEXT,
-            byte & (1 << 1) ? SET_WHITE PIXEL_TEXT : SET_DEFAULT PIXEL_TEXT,
-            byte & (1 << 0) ? SET_WHITE PIXEL_TEXT : SET_DEFAULT PIXEL_TEXT
-          );
-}
-
-static inline
 void chip8_load_to_mem(Chip8 *c, uint32_t offset, void *data, size_t size) {
     memcpy(&c->mem[offset], data, size);
 }
@@ -182,16 +167,29 @@ void chip8_load_pixels(Chip8 *c, uint8_t x, uint8_t y, uint8_t h) {
 
 }
 
+#define MAX_FRAME_BUFFER_SIZE       (DISPLAY_SIZE * (sizeof(SET_WHITE) + sizeof(PIXEL_TEXT)) * BYTE_SIZE)
+
 static inline
 void chip8_display(Chip8 *c) {
+    char frame_buffer[MAX_FRAME_BUFFER_SIZE];
+    size_t char_count = 0;
     for (int y = 0; y < DISPLAY_HEIGHT; ++y) {
         for (int x = 0; x < DISPLAY_WIDTH; ++x) {
             const uint8_t byte = c->display[y * DISPLAY_WIDTH + x];
-            print_as_formatted_binary(byte);
+            char_count += snprintf(&frame_buffer[char_count], MAX_FRAME_BUFFER_SIZE, "%s%s%s%s%s%s%s%s",
+                    byte & (1 << 7) ? SET_WHITE PIXEL_TEXT : SET_DEFAULT PIXEL_TEXT,
+                    byte & (1 << 6) ? SET_WHITE PIXEL_TEXT : SET_DEFAULT PIXEL_TEXT,
+                    byte & (1 << 5) ? SET_WHITE PIXEL_TEXT : SET_DEFAULT PIXEL_TEXT,
+                    byte & (1 << 4) ? SET_WHITE PIXEL_TEXT : SET_DEFAULT PIXEL_TEXT,
+                    byte & (1 << 3) ? SET_WHITE PIXEL_TEXT : SET_DEFAULT PIXEL_TEXT,
+                    byte & (1 << 2) ? SET_WHITE PIXEL_TEXT : SET_DEFAULT PIXEL_TEXT,
+                    byte & (1 << 1) ? SET_WHITE PIXEL_TEXT : SET_DEFAULT PIXEL_TEXT,
+                    byte & (1 << 0) ? SET_WHITE PIXEL_TEXT : SET_DEFAULT PIXEL_TEXT
+                    );
         }
-        printf(SET_DEFAULT"\n");
+        char_count += snprintf(&frame_buffer[char_count], MAX_FRAME_BUFFER_SIZE, SET_DEFAULT PLATFORM_EOL);
     }
-    platform_cursor_up(DISPLAY_HEIGHT);
+    platform_write_to_console(frame_buffer, char_count, DISPLAY_HEIGHT);
 }
 
 static inline
