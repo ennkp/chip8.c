@@ -231,6 +231,76 @@ int disable_stdout_ansi_code_processing(void) {
 
 #define PLATFORM_EOL "\r\n"
 
+static uint8_t keycodes[17];
+
+static inline
+int setup_win32_keyboard(void) {
+    memset(keys, -1, sizeof(keys));
+
+    struct {
+        uint8_t scancode;
+        uint8_t keycode;
+    } keyinfo[] = {
+        { .scancode = 0x001 }, // ESC
+
+        { .scancode = 0x002 }, // 1
+        { .scancode = 0x003 }, // 2
+        { .scancode = 0x004 }, // 3
+        { .scancode = 0x005 }, // 4
+
+        { .scancode = 0x010 }, // Q
+        { .scancode = 0x011 }, // W
+        { .scancode = 0x012 }, // E
+        { .scancode = 0x013 }, // R
+
+        { .scancode = 0x01E }, // A
+        { .scancode = 0x01F }, // S
+        { .scancode = 0x020 }, // D
+        { .scancode = 0x021 }, // F
+
+        { .scancode = 0x02C }, // Z
+        { .scancode = 0x02D }, // X
+        { .scancode = 0x02E }, // C
+        { .scancode = 0x02F }, // V
+    };
+
+    for (size_t i = 0; i < sizeof(keyinfo)/sizeof(keyinfo[0]); ++i) {
+        const UINT keycode = MapVirtualKey(keyinfo[i].scancode, MAPVK_VSC_TO_VK);
+
+        if (!keycode) {
+            fprintf(stderr, "Failed to map scancode: %d\n", keyinfo[i].scancode);
+            return 0;
+        }
+
+        keyinfo[i].keycode = keycode;
+        keycodes[i] = keycode;
+    }
+
+    keys[keyinfo[0].keycode] =  CKEY_ESC;
+
+    keys[keyinfo[1].keycode] =  CKEY_1;
+    keys[keyinfo[2].keycode] =  CKEY_2;
+    keys[keyinfo[3].keycode] =  CKEY_3;
+    keys[keyinfo[4].keycode] =  CKEY_4;
+
+    keys[keyinfo[5].keycode] =  CKEY_Q;
+    keys[keyinfo[6].keycode] =  CKEY_W;
+    keys[keyinfo[7].keycode] =  CKEY_E;
+    keys[keyinfo[8].keycode] =  CKEY_R;
+
+    keys[keyinfo[9].keycode] =  CKEY_A;
+    keys[keyinfo[10].keycode] = CKEY_S;
+    keys[keyinfo[11].keycode] = CKEY_D;
+    keys[keyinfo[12].keycode] = CKEY_F;
+
+    keys[keyinfo[13].keycode] = CKEY_Z;
+    keys[keyinfo[14].keycode] = CKEY_X;
+    keys[keyinfo[15].keycode] = CKEY_C;
+    keys[keyinfo[16].keycode] = CKEY_V;
+
+    return 1;
+}
+
 #endif // end of OS specific stuff
 
 static inline
@@ -244,6 +314,9 @@ int platform_setup(void) {
         return 0;
 #elif defined _WIN32
     if (!enable_stdout_ansi_code_processing())
+        return 0;
+
+    if (!setup_win32_keyboard())
         return 0;
 #endif
 
@@ -267,6 +340,8 @@ void platform_cursor_up(int n) {
 
 static inline
 int platform_revert(void) {
+    EXECUTE_ANSI_CODE("[0J");   // clear till end of screen
+    EXECUTE_ANSI_CODE("[?25h"); // make cursor visible
 
     if (!disable_terminal_raw_mode())
         return 0;
@@ -278,9 +353,6 @@ int platform_revert(void) {
     if (!disable_stdout_ansi_code_processing())
         return 0;
 #endif
-
-    EXECUTE_ANSI_CODE("[0J");   // clear till end of screen
-    EXECUTE_ANSI_CODE("[?25h"); // make cursor visible
     return 1;
 }
 
@@ -311,8 +383,17 @@ int platform_set_keystates(KeyStates *keystates) {
     }
 
 #elif defined _WIN32
-(void) keystates;
-(void) keys;
+    KeyStates this_frame = 0;
+    for (size_t i = 0;i < sizeof(keycodes)/sizeof(keycodes[0]); ++i) {
+        const uint8_t vkey = keycodes[i];
+        if (GetAsyncKeyState(vkey) & (1<<15)) {
+            const Chip8Key key = keys[vkey];
+
+            this_frame |= KEY_FLAG(key);
+            state_changed = 1;
+        }
+    }
+    *keystates = this_frame;
 #endif
 
     return state_changed;
