@@ -389,7 +389,7 @@ void chip8_decode_execute(Chip8 *c, uint16_t instruction) {
                                   while (k < CKEY_ESC && !KEY_DOWN(diff, k))
                                       k++;
 
-                                  printf("Key pressed and released: %s\n", get_chip8key_name(k));
+                                  DEBUG("Key pressed and released: %s\n", get_chip8key_name(k));
                                   c->v[reg] = k;
                                   store = 0;
                               } else {
