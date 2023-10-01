@@ -1,12 +1,5 @@
 #include "platform.h"
 
-#define FATAL(...)                      \
-    do {                                \
-        fprintf(stderr, __VA_ARGS__);   \
-        fprintf(stderr, "\n");          \
-        exit(1);                        \
-    } while (0)
-
 // use
 // #define DEBUG_LOG
 // for printing logs to stderr.
@@ -38,6 +31,7 @@
 
 // display constants
 #define PIXEL_TEXT              "  "
+#define MAX_FRAME_BUFFER_SIZE   (DISPLAY_SIZE * (sizeof(SET_WHITE) + sizeof(PIXEL_TEXT)) * BYTE_SIZE)
 
 // instruction decoding constants
 #define OP(instruction)         (instruction >> 12)
@@ -49,6 +43,9 @@
 
 // cycle constants
 #define DEFAULT_FPS             60
+#define DEFAULT_IPS             700
+
+#define STRMATCH(flag_str)      (!strncmp(flag_str, arg, sizeof(flag_str)))
 
 static uint8_t FONT_DATA[] = {
     0xF0, 0x90, 0x90, 0x90, 0xF0, // 0
@@ -69,6 +66,22 @@ static uint8_t FONT_DATA[] = {
     0xF0, 0x80, 0xF0, 0x80, 0x80  // F
 };
 
+// set VY to VX before all the bit shifting operations
+#define QUIRK_SHIFT_USE_VY      (1 << 0)
+
+// BNNN uses the v0 register value as an offset to jump in the original COSMAC VIP
+// BXNN version uses vX register value as the offset in modern implementations
+#define QUIRK_BXNN              (1 << 1)
+
+// Original COSMAC VIP incremented the index register on load/store operations
+#define QUIRK_INC_INDEX         (1 << 2)
+
+typedef struct {
+    uint32_t instructions_per_frame;
+    uint32_t frames_per_sec;
+    uint32_t quirks;
+} Config;
+
 typedef struct {
     uint8_t    mem[MEM_SIZE];
     uint16_t   pc;
@@ -79,7 +92,8 @@ typedef struct {
     uint8_t    sound_timer;
     uint8_t    v[REG_COUNT];
     uint8_t    display[DISPLAY_SIZE];
-    KeyStates   keys;
+    KeyStates  keys;
+    Config     config;
 } Chip8;
 
 static inline
@@ -167,7 +181,6 @@ void chip8_load_pixels(Chip8 *c, uint8_t x, uint8_t y, uint8_t h) {
 
 }
 
-#define MAX_FRAME_BUFFER_SIZE       (DISPLAY_SIZE * (sizeof(SET_WHITE) + sizeof(PIXEL_TEXT)) * BYTE_SIZE)
 
 static inline
 void chip8_display(Chip8 *c) {
@@ -288,7 +301,6 @@ void chip8_decode_execute(Chip8 *c, uint16_t instruction) {
                           break;
                       case 0x4:
                           {
-                              // TODO: optimize this?
                               const uint16_t sum = (c->v[x] + c->v[y]);
                               c->v[x] = sum;
                               c->v[0xF] = sum > 0xFF;
@@ -311,9 +323,11 @@ void chip8_decode_execute(Chip8 *c, uint16_t instruction) {
                               DEBUG("v%u = v%u - v%u (%x) => %x", x, y, x, c->v[y], c->v[x]);
                               break;
                           }
-                      // TODO: add flag to allow setting VX to the value of VY
                       case 0x6:
                           {
+                              if (c->config.quirks & QUIRK_SHIFT_USE_VY)
+                                  c->v[x] = c->v[y];
+
                               const uint8_t vf = c->v[x] & (1 << 0) ? 1 : 0;
                               c->v[x] >>= 1;
                               c->v[0xF] = vf;
@@ -322,6 +336,9 @@ void chip8_decode_execute(Chip8 *c, uint16_t instruction) {
                           }
                       case 0xE:
                           {
+                              if (c->config.quirks & QUIRK_SHIFT_USE_VY)
+                                  c->v[x] = c->v[y];
+
                               const uint8_t vf = c->v[x] & (1 << 7) ? 1 : 0;
                               c->v[x] <<= 1;
                               c->v[0xF] = vf;
@@ -338,9 +355,11 @@ void chip8_decode_execute(Chip8 *c, uint16_t instruction) {
                       break;
                   }
         case 0xB: {
-                      // TODO: add flag for using BXNN optionally
+                      const uint8_t reg = c->config.quirks & QUIRK_BXNN ?
+                                                X(instruction) :
+                                                0;
                       const uint16_t val = NNN(instruction);
-                      c->i = val + c->v[0];
+                      c->i = val + c->v[reg];
                       DEBUG("i = %u", c->i);
                       break;
                   }
@@ -432,12 +451,13 @@ void chip8_decode_execute(Chip8 *c, uint16_t instruction) {
                               DEBUG("d: %u -> (%u, %u, %u)", c->v[reg], d1, d2, d3);
                               break;
                           }
-                      // TODO: add flag for incrementing c->i for supporting older games
                       case 0x55:
                           for (int i = 0; i <= reg; ++i) {
                               c->mem[c->i + i] = c->v[i];
                               DEBUG("Storing v%u (%u) at mem[%u]", i, c->v[i], i);
                           }
+                          if (c->config.quirks & QUIRK_INC_INDEX)
+                              c->i += reg + 1;
                           break;
                       case 0x65:
                           for (int i = 0; i <= reg; ++i) {
@@ -454,6 +474,67 @@ void chip8_decode_execute(Chip8 *c, uint16_t instruction) {
     }
 }
 
+static inline
+const char *usage(void) {
+    return
+        "Usage: chip8 <rom> [options]\n"
+        "Options:\n"
+        "    --help, -h             Display this information.\n"
+        "    -ips <arg>             Instructions per second to use, must be greater or equal to FPS (Default: " STRINGIFY(DEFAULT_IPS) ").\n"
+        "    -fps <arg>             Frames per second to use (Default: " STRINGIFY(DEFAULT_FPS) ").\n"
+        "    -qshift-use-vy         Quirk: set VY to VX before bit shifting operations.\n"
+        "    -qbxnn                 Quirk: use BXNN version of BNNN (Jump with offset) operation.\n"
+        "    -qinc-index            Quirk: increment index register on memory load/store operations.\n"
+    ;
+}
+static inline
+void parse_cmdline_args(Chip8 *c, CmdLineArgs *args, const char **rom) {
+    Config cfg = {0};
+
+    const char instructions_per_sec[]   = "-ips";
+    const char frames_per_sec[]         = "-fps";
+    const char quirk_shift_use_vy[]     = "-qshift-use-vy";
+    const char quirk_bxnn[]             = "-qbxnn";
+    const char quirk_inc_index[]        = "-qinc-index";
+    const char help1[]                  = "-h";
+    const char help2[]                  = "--help";
+
+    const char *arg;
+    while ((arg = next_arg(args))) {
+
+        if (STRMATCH(instructions_per_sec))
+            cfg.instructions_per_frame = parse_option_value_to_uint(args);
+
+        else if (STRMATCH(frames_per_sec))
+            cfg.frames_per_sec = parse_option_value_to_uint(args);
+
+        else if (STRMATCH(quirk_shift_use_vy))
+            cfg.quirks |= QUIRK_SHIFT_USE_VY;
+
+        else if (STRMATCH(quirk_inc_index))
+            cfg.quirks |= QUIRK_INC_INDEX;
+
+        else if (STRMATCH(quirk_bxnn))
+            cfg.quirks |= QUIRK_BXNN;
+
+        else if (STRMATCH(help1) || STRMATCH(help2)) {
+            printf("%s", usage());
+            exit(0);
+        }
+
+        else if (!strncmp("-", arg, 1))
+            FATAL("Unrecognized command-line option: %s", arg);
+
+        else
+            *rom = arg;
+
+    }
+    c->config = cfg;
+
+    if (!*rom)
+        FATAL("No rom specified");
+}
+
 int main(int argc, const char **argv) {
 
     if (argc < 2)
@@ -461,18 +542,31 @@ int main(int argc, const char **argv) {
 
     Chip8 *c = &(Chip8){0};
 
-    chip8_load_to_mem(c, FONT_DATA_OFFSET, FONT_DATA, sizeof(FONT_DATA));
-    chip8_load_rom(c, argv[1]);
+    {
+        CmdLineArgs args = init_args_list(argc, argv);
+        const char *rom = NULL;
+        parse_cmdline_args(c, &args, &rom);
+        chip8_load_to_mem(c, FONT_DATA_OFFSET, FONT_DATA, sizeof(FONT_DATA));
+        chip8_load_rom(c, rom);
+    }
 
-    // TODO: introduce flag for changing instructions_per_sec
-    const uint32_t instructions_per_sec = 700;
+    const uint32_t instructions_per_sec = c->config.instructions_per_frame ?
+        c->config.instructions_per_frame : DEFAULT_IPS;
+    const uint32_t frames_per_sec = c->config.frames_per_sec ?
+        c->config.frames_per_sec : DEFAULT_FPS;
+
+    printf("ips: %u/sec\n", instructions_per_sec);
+    printf("fps: %u/sec\n", frames_per_sec);
+
+    if (instructions_per_sec < frames_per_sec)
+        FATAL("Instructions per second cannot be less than Frames per second. Use -h for more details");
 
     if (!platform_setup())
         FATAL("Failed to setup platform");
 
     while (1) {
 
-        for (uint32_t i = 0; i < instructions_per_sec/DEFAULT_FPS; ++i) {
+        for (uint32_t i = 0; i < instructions_per_sec/frames_per_sec; ++i) {
             uint16_t instruction = chip8_fetch(c);
             chip8_decode_execute(c, instruction);
         }
@@ -486,7 +580,7 @@ int main(int argc, const char **argv) {
                 goto quit;
         }
 
-        platform_sleep(1000/DEFAULT_FPS);
+        platform_sleep(1000/frames_per_sec);
 
     }
 

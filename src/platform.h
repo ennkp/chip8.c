@@ -440,4 +440,61 @@ const char *get_chip8key_name(Chip8Key key) {
     return "<unknown>";
 }
 
+// utils
+#define FATAL(...)                      \
+    do {                                \
+        fprintf(stderr, "fatal: ");     \
+        fprintf(stderr, __VA_ARGS__);   \
+        fprintf(stderr, "\n");          \
+        exit(1);                        \
+    } while (0)
+
+#define EXPAND_PASTE(x)         #x
+#define STRINGIFY(x)            EXPAND_PASTE(x)
+#define STRMATCH(flag_str)      (!strncmp(flag_str, arg, sizeof(flag_str)))
+
+// cmdline args parsing
+#include <errno.h>
+
+typedef struct {
+    int argc;
+    const char **argv;
+    int next;
+} CmdLineArgs;
+
+static inline
+CmdLineArgs init_args_list(int argc, const char **argv) {
+    return (CmdLineArgs) {
+        .argc = argc,
+        .argv = argv,
+        .next = 1,
+    };
+}
+
+static inline
+const char* next_arg(CmdLineArgs *args) {
+    return args->next <= args->argc ? args->argv[args->next++] : "";
+}
+
+static inline
+uint32_t parse_option_value_to_uint(CmdLineArgs *args) {
+    const char *option_name = args->argv[args->next - 1];
+    const char *arg = next_arg(args);
+
+    if (!arg)
+        FATAL("Missing argument for '%s'", option_name);
+
+    char *end = NULL;
+    uint32_t value;
+    if (!(value = strtoul(arg, &end, 10)))
+        FATAL("Failed to convert value: '%s' to integer", arg);
+
+    if (errno == ERANGE) {
+        errno = 0;
+        FATAL("range error for '%s', got '%u'", option_name, value);
+    }
+
+    return value;
+}
+
 #endif // PLATFORM_H
