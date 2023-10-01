@@ -118,6 +118,12 @@ void chip8_load_rom(Chip8 *c, const char *file_path) {
     const size_t file_size = ftell(file);
     rewind(file);
 
+    if (file_size > MEM_SIZE - PROGRAM_START_OFFSET) {
+        FATAL("Not enough memory to load roam - Rom size: %zu KB. Available: %d KB",
+                file_size,
+                MEM_SIZE - PROGRAM_START_OFFSET);
+    }
+
     c->pc = PROGRAM_START_OFFSET;
     fread(&c->mem[c->pc], sizeof(char), file_size, file);
 
