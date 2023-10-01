@@ -8,8 +8,6 @@
 
 #define ESC                         "\x1b"
 #define EXECUTE_ANSI_CODE(...)      printf(ESC __VA_ARGS__)
-#define SET_WHITE                   ESC"[107m"
-#define SET_DEFAULT                 ESC"[49m"
 
 typedef enum {
     CKEY_1 = 0x1,
@@ -477,7 +475,9 @@ const char* next_arg(CmdLineArgs *args) {
 }
 
 static inline
-uint32_t parse_option_value_to_uint(CmdLineArgs *args) {
+uint32_t parse_option_value_to_uint(CmdLineArgs *args, int radix) {
+    errno = 0;
+
     const char *option_name = args->argv[args->next - 1];
     const char *arg = next_arg(args);
 
@@ -486,12 +486,13 @@ uint32_t parse_option_value_to_uint(CmdLineArgs *args) {
 
     char *end = NULL;
     uint32_t value;
-    if (!(value = strtoul(arg, &end, 10)))
-        FATAL("Failed to convert value: '%s' to integer", arg);
-
-    if (errno == ERANGE) {
+    if (!(value = strtoul(arg, &end, radix)) && errno) {
+        if (errno == ERANGE) {
+            errno = 0;
+            FATAL("Value out of range for '%s'", option_name);
+        }
         errno = 0;
-        FATAL("range error for '%s', got '%u'", option_name, value);
+        FATAL("Failed to convert value: '%s' to integer", arg);
     }
 
     return value;

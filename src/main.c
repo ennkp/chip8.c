@@ -31,7 +31,11 @@
 
 // display constants
 #define PIXEL_TEXT              "  "
-#define MAX_FRAME_BUFFER_SIZE   (DISPLAY_SIZE * (sizeof(SET_WHITE) + sizeof(PIXEL_TEXT)) * BYTE_SIZE)
+#define ANSI_COLOR_FORMAT       ESC"[48;2;%u;%u;%um"
+#define SET_WHITE_BG            ESC"[107m"
+#define SET_DEFAULT_BG          ESC"[49m"
+#define ANSI_COLOR_FORMAT_LEN   (sizeof(ANSI_COLOR_FORMAT) + 3 + sizeof(PIXEL_TEXT))
+#define MAX_FRAME_BUFFER_SIZE   (DISPLAY_SIZE * (ANSI_COLOR_FORMAT_LEN * 2) * BYTE_SIZE)
 
 // instruction decoding constants
 #define OP(instruction)         (instruction >> 12)
@@ -77,9 +81,11 @@ static uint8_t FONT_DATA[] = {
 #define QUIRK_INC_INDEX         (1 << 2)
 
 typedef struct {
-    uint32_t instructions_per_frame;
-    uint32_t frames_per_sec;
-    uint32_t quirks;
+    uint32_t     instructions_per_frame;
+    uint32_t     frames_per_sec;
+    uint32_t     quirks;
+    const char   fg_text[ANSI_COLOR_FORMAT_LEN];
+    const char   bg_text[ANSI_COLOR_FORMAT_LEN];
 } Config;
 
 typedef struct {
@@ -190,17 +196,17 @@ void chip8_display(Chip8 *c) {
         for (int x = 0; x < DISPLAY_WIDTH; ++x) {
             const uint8_t byte = c->display[y * DISPLAY_WIDTH + x];
             char_count += snprintf(&frame_buffer[char_count], MAX_FRAME_BUFFER_SIZE, "%s%s%s%s%s%s%s%s",
-                    byte & (1 << 7) ? SET_WHITE PIXEL_TEXT : SET_DEFAULT PIXEL_TEXT,
-                    byte & (1 << 6) ? SET_WHITE PIXEL_TEXT : SET_DEFAULT PIXEL_TEXT,
-                    byte & (1 << 5) ? SET_WHITE PIXEL_TEXT : SET_DEFAULT PIXEL_TEXT,
-                    byte & (1 << 4) ? SET_WHITE PIXEL_TEXT : SET_DEFAULT PIXEL_TEXT,
-                    byte & (1 << 3) ? SET_WHITE PIXEL_TEXT : SET_DEFAULT PIXEL_TEXT,
-                    byte & (1 << 2) ? SET_WHITE PIXEL_TEXT : SET_DEFAULT PIXEL_TEXT,
-                    byte & (1 << 1) ? SET_WHITE PIXEL_TEXT : SET_DEFAULT PIXEL_TEXT,
-                    byte & (1 << 0) ? SET_WHITE PIXEL_TEXT : SET_DEFAULT PIXEL_TEXT
+                    byte & (1 << 7) ? c->config.fg_text : c->config.bg_text,
+                    byte & (1 << 6) ? c->config.fg_text : c->config.bg_text,
+                    byte & (1 << 5) ? c->config.fg_text : c->config.bg_text,
+                    byte & (1 << 4) ? c->config.fg_text : c->config.bg_text,
+                    byte & (1 << 3) ? c->config.fg_text : c->config.bg_text,
+                    byte & (1 << 2) ? c->config.fg_text : c->config.bg_text,
+                    byte & (1 << 1) ? c->config.fg_text : c->config.bg_text,
+                    byte & (1 << 0) ? c->config.fg_text : c->config.bg_text
                     );
         }
-        char_count += snprintf(&frame_buffer[char_count], MAX_FRAME_BUFFER_SIZE, SET_DEFAULT PLATFORM_EOL);
+        char_count += snprintf(&frame_buffer[char_count], MAX_FRAME_BUFFER_SIZE, SET_DEFAULT_BG PLATFORM_EOL);
     }
     platform_write_to_console(frame_buffer, char_count, DISPLAY_HEIGHT);
 }
@@ -485,37 +491,74 @@ const char *usage(void) {
         "    -qshift-use-vy         Quirk: set VY to VX before bit shifting operations.\n"
         "    -qbxnn                 Quirk: use BXNN version of BNNN (Jump with offset) operation.\n"
         "    -qinc-index            Quirk: increment index register on memory load/store operations.\n"
+        "    -fg <hexcode>          Set pixel 'on' color (foreground). Eg: FF0000 for red\n"
+        "    -bg <hexcode>          Set pixel 'off' color (background). Eg: 00FF00 for green\n"
     ;
 }
+
+static inline
+void generate_ansi_coded_text(int32_t color, const char *out_text, const char *default_text) {
+    char color_format_buffer[ANSI_COLOR_FORMAT_LEN];
+    size_t str_len = 0;
+
+    if (color != -1)
+        str_len = snprintf(color_format_buffer,
+                ANSI_COLOR_FORMAT_LEN,
+                ANSI_COLOR_FORMAT PIXEL_TEXT,
+                color >> 16 & 0xFF,
+                color >>  8 & 0xFF,
+                color >>  0 & 0xFF);
+    else
+        str_len = snprintf(color_format_buffer,
+                ANSI_COLOR_FORMAT_LEN,
+                default_text);
+    memcpy((char*)out_text, color_format_buffer, str_len);
+}
+
 static inline
 void parse_cmdline_args(Chip8 *c, CmdLineArgs *args, const char **rom) {
-    Config cfg = {0};
+
+    uint32_t
+        ips = 0,
+        fps = 0,
+        quirks = 0;
+    int32_t
+        fgc = -1,
+        bgc = -1;
 
     const char instructions_per_sec[]   = "-ips";
     const char frames_per_sec[]         = "-fps";
     const char quirk_shift_use_vy[]     = "-qshift-use-vy";
     const char quirk_bxnn[]             = "-qbxnn";
     const char quirk_inc_index[]        = "-qinc-index";
-    const char help1[]                  = "-h";
-    const char help2[]                  = "--help";
+    const char fgcolor[]                = "-fg";
+    const char bgcolor[]                = "-bg";
+    const char help1[]                  = "--help";
+    const char help2[]                  = "-h";
 
     const char *arg;
     while ((arg = next_arg(args))) {
 
         if (STRMATCH(instructions_per_sec))
-            cfg.instructions_per_frame = parse_option_value_to_uint(args);
+            ips = parse_option_value_to_uint(args, 10);
 
         else if (STRMATCH(frames_per_sec))
-            cfg.frames_per_sec = parse_option_value_to_uint(args);
+            fps = parse_option_value_to_uint(args, 10);
+
+        else if (STRMATCH(fgcolor))
+            fgc = parse_option_value_to_uint(args, 16);
+
+        else if (STRMATCH(bgcolor))
+            bgc = parse_option_value_to_uint(args, 16);
 
         else if (STRMATCH(quirk_shift_use_vy))
-            cfg.quirks |= QUIRK_SHIFT_USE_VY;
+            quirks |= QUIRK_SHIFT_USE_VY;
 
         else if (STRMATCH(quirk_inc_index))
-            cfg.quirks |= QUIRK_INC_INDEX;
+            quirks |= QUIRK_INC_INDEX;
 
         else if (STRMATCH(quirk_bxnn))
-            cfg.quirks |= QUIRK_BXNN;
+            quirks |= QUIRK_BXNN;
 
         else if (STRMATCH(help1) || STRMATCH(help2)) {
             printf("%s", usage());
@@ -529,7 +572,13 @@ void parse_cmdline_args(Chip8 *c, CmdLineArgs *args, const char **rom) {
             *rom = arg;
 
     }
-    c->config = cfg;
+
+    generate_ansi_coded_text(fgc, c->config.fg_text, SET_WHITE_BG PIXEL_TEXT);
+    generate_ansi_coded_text(bgc, c->config.bg_text, SET_DEFAULT_BG PIXEL_TEXT);
+
+    c->config.instructions_per_frame = ips;
+    c->config.frames_per_sec = fps;
+    c->config.quirks = quirks;
 
     if (!*rom)
         FATAL("No rom specified");
@@ -557,6 +606,11 @@ int main(int argc, const char **argv) {
 
     printf("ips: %u/sec\n", instructions_per_sec);
     printf("fps: %u/sec\n", frames_per_sec);
+    printf("fg:  %s"SET_DEFAULT_BG"\n"
+           "bg:  %s"SET_DEFAULT_BG"\n\n",
+            c->config.fg_text,
+            c->config.bg_text);
+
 
     if (instructions_per_sec < frames_per_sec)
         FATAL("Instructions per second cannot be less than Frames per second. Use -h for more details");
