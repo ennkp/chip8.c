@@ -612,17 +612,18 @@ int main(int argc, const char **argv) {
 
     printf("ips: %u/sec\n", instructions_per_sec);
     printf("fps: %u/sec\n", frames_per_sec);
-    printf("fg:  %s"SET_DEFAULT_BG"\n"
-           "bg:  %s"SET_DEFAULT_BG"\n\n",
-            c->config.fg_text,
-            c->config.bg_text);
-
 
     if (instructions_per_sec < frames_per_sec)
         FATAL("Instructions per second cannot be less than Frames per second. Use -h for more details");
 
     if (!platform_setup())
         FATAL("Failed to setup platform");
+
+    printf("fg:  %s"SET_DEFAULT_BG"\n"
+           "bg:  %s"SET_DEFAULT_BG"\n\n",
+            c->config.fg_text,
+            c->config.bg_text);
+
 
     while (1) {
 
